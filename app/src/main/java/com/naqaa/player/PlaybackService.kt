@@ -5,6 +5,7 @@ import android.content.ContentUris
 import android.content.Intent
 import android.content.SharedPreferences
 import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -28,6 +29,7 @@ class PlaybackService : MediaSessionService() {
     private lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
     private var eq: Equalizer? = null
+    private var boost: LoudnessEnhancer? = null
 
     private val saver = object : Runnable {
         override fun run() {
@@ -45,7 +47,15 @@ class PlaybackService : MediaSessionService() {
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
             try { eq?.release() } catch (_: Exception) {}
             eq = null
+            try { boost?.release() } catch (_: Exception) {}
+            boost = null
             if (prefs.getBoolean(Prefs.VOICE, false)) applyVoice(true)
+            applyBoost(prefs.getInt(Prefs.BOOST, 0))
+        }
+
+        // «تكرار مرة»: بعد بدء الإعادة (أو عند الانتقال لمقطع آخر) يعود التكرار إلى الوضع العادي
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (player.repeatMode != Player.REPEAT_MODE_OFF) player.repeatMode = Player.REPEAT_MODE_OFF
         }
 
         // رجوع تلقائي بضع ثوانٍ بعد توقف طويل (أكثر من دقيقة)
@@ -95,6 +105,7 @@ class PlaybackService : MediaSessionService() {
             val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                 .add(SessionCommand(Cmd.SILENCE, Bundle.EMPTY))
                 .add(SessionCommand(Cmd.VOICE, Bundle.EMPTY))
+                .add(SessionCommand(Cmd.BOOST, Bundle.EMPTY))
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(cmds)
@@ -110,6 +121,7 @@ class PlaybackService : MediaSessionService() {
             when (customCommand.customAction) {
                 Cmd.SILENCE -> player.setSkipSilenceEnabled(args.getBoolean("on", false))
                 Cmd.VOICE -> applyVoice(args.getBoolean("on", false))
+                Cmd.BOOST -> applyBoost(args.getInt("db", 0))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
@@ -159,6 +171,7 @@ class PlaybackService : MediaSessionService() {
         player.setSkipSilenceEnabled(prefs.getBoolean(Prefs.SILENCE, false))
         player.addListener(listener)
         if (prefs.getBoolean(Prefs.VOICE, false)) applyVoice(true)
+        applyBoost(prefs.getInt(Prefs.BOOST, 0))
 
         val open = PendingIntent.getActivity(
             this, 0,
@@ -184,6 +197,8 @@ class PlaybackService : MediaSessionService() {
         savePosition()
         try { eq?.release() } catch (_: Exception) {}
         eq = null
+        try { boost?.release() } catch (_: Exception) {}
+        boost = null
         session?.let {
             it.player.release()
             it.release()
@@ -215,6 +230,22 @@ class PlaybackService : MediaSessionService() {
                 }
                 e.setBandLevel(band.toShort(), (db * 100).coerceIn(lo, hi).toShort())
             }
+            e.setEnabled(true)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** رفع الصوت الضعيف: 0 = إيقاف، أو 4 / 8 ديسيبل (LoudnessEnhancer) */
+    private fun applyBoost(db: Int) {
+        try {
+            if (db <= 0) {
+                boost?.setEnabled(false)
+                return
+            }
+            val sid = player.audioSessionId
+            if (sid == C.AUDIO_SESSION_ID_UNSET) return
+            val e = boost ?: LoudnessEnhancer(sid).also { boost = it }
+            e.setTargetGain(db * 100)
             e.setEnabled(true)
         } catch (_: Exception) {
         }

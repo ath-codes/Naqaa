@@ -14,6 +14,8 @@ object Prefs {
     const val SILENCE = "silence"
     const val LAST = "last_id"
     const val VOICE = "voice"
+    const val BOOST = "boost_db"
+    const val REMAIN = "show_remain"
     fun pos(id: String) = "pos_$id"
     fun dur(id: String) = "dur_$id"
     fun seen(id: String) = "seen_$id"
@@ -27,6 +29,7 @@ const val F_HIDDEN = "__hidden__"
 object Cmd {
     const val SILENCE = "naqaa.SILENCE"
     const val VOICE = "naqaa.VOICE"
+    const val BOOST = "naqaa.BOOST"
 }
 
 data class Track(

@@ -183,14 +183,16 @@
         </LinearLayout>
 
         <FrameLayout
+            android:id="@+id/coverBox"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:visibility="gone">
 
             <ImageView
                 android:id="@+id/cover"
-                android:layout_width="180dp"
-                android:layout_height="180dp"
+                android:layout_width="240dp"
+                android:layout_height="240dp"
                 android:layout_gravity="center"
                 android:contentDescription="الغلاف"
                 android:scaleType="centerInside"
@@ -200,13 +202,14 @@
         <TextView
             android:id="@+id/pTitle"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:ellipsize="end"
             android:gravity="center"
             android:lineSpacingExtra="4dp"
-            android:maxLines="4"
+            android:maxLines="8"
             android:textColor="@color/text"
-            android:textSize="22sp"
+            android:textSize="28sp"
             android:textStyle="bold" />
 
         <TextView
@@ -257,7 +260,11 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:gravity="end"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="end|center_vertical"
+                android:minHeight="40dp"
                 android:text="0:00"
                 android:textColor="@color/text2"
                 android:textSize="13sp" />
@@ -368,7 +375,7 @@
                 android:gravity="center"
                 android:paddingStart="4dp"
                 android:paddingEnd="4dp"
-                android:text="وضوح الصوت"
+                android:text="الصوت"
                 android:textColor="@color/chip_text"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -397,7 +404,7 @@
                 android:layout_width="0dp"
                 android:layout_height="48dp"
                 android:layout_marginStart="4dp"
-                android:layout_marginEnd="0dp"
+                android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 android:background="@drawable/bg_chip"
                 android:gravity="center"
@@ -405,6 +412,20 @@
                 android:paddingEnd="4dp"
                 android:text="العلامات"
                 android:textColor="@color/text"
+                android:textSize="13sp" />
+            <TextView
+                android:id="@+id/btnRepeat"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:text="تكرار مرة"
+                android:textColor="@color/chip_text"
                 android:textSize="13sp" />
         </LinearLayout>
     </LinearLayout>

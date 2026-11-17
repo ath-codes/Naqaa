@@ -18,11 +18,13 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.TypedValue
 import android.view.inputmethod.InputMethodManager
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
 import android.widget.SeekBar
 import androidx.activity.OnBackPressedCallback
@@ -41,6 +43,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.common.util.concurrent.ListenableFuture
 import com.naqaa.player.databinding.ActivityMainBinding
+import com.naqaa.player.databinding.DialogSoundBinding
 import com.naqaa.player.databinding.ItemRowBinding
 import java.io.File
 
@@ -76,6 +79,7 @@ class MainActivity : AppCompatActivity() {
     private var dragging = false
     private var scanning = false
     private var pending: (() -> Unit)? = null
+    private var showRemain = false
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -93,13 +97,11 @@ class MainActivity : AppCompatActivity() {
             val c = controller
             if (c != null && b.playerPage.visibility == View.VISIBLE) {
                 val dur = c.duration
-                if (dur > 0) {
-                    b.tvDur.text = fmtTime(dur)
-                    if (!dragging) {
-                        b.seek.max = dur.toInt()
-                        b.seek.progress = c.currentPosition.toInt()
-                        b.tvPos.text = fmtTime(c.currentPosition)
-                    }
+                if (dur > 0 && !dragging) {
+                    b.seek.max = dur.toInt()
+                    b.seek.progress = c.currentPosition.toInt()
+                    b.tvPos.text = fmtTime(c.currentPosition)
+                    setDurText(c.currentPosition, dur)
                 }
             }
             ui.postDelayed(this, 500)
@@ -149,15 +151,28 @@ class MainActivity : AppCompatActivity() {
         }
         b.btnSpeed.setOnClickListener { chooseSpeed() }
         b.btnSilence.setOnClickListener { toggleSilence() }
-        b.btnVoice.setOnClickListener { toggleVoice() }
+        b.btnVoice.setOnClickListener { showSoundDialog() }
+        b.btnRepeat.setOnClickListener { toggleRepeat() }
+        showRemain = prefs.getBoolean(Prefs.REMAIN, false)
+        b.tvDur.setOnClickListener {
+            showRemain = !showRemain
+            prefs.edit().putBoolean(Prefs.REMAIN, showRemain).apply()
+            val c = controller
+            val d = c?.duration ?: 0L
+            if (c != null && d > 0) setDurText(if (dragging) b.seek.progress.toLong() else c.currentPosition, d)
+        }
         b.btnAddMark.setOnClickListener { addBookmark() }
         b.btnMarks.setOnClickListener { showBookmarks() }
         refreshSilenceLabel()
-        refreshVoiceLabel()
+        refreshSoundLabel()
 
         b.seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser) b.tvPos.text = fmtTime(progress.toLong())
+                if (fromUser) {
+                    b.tvPos.text = fmtTime(progress.toLong())
+                    val d = controller?.duration ?: 0L
+                    if (d > 0) setDurText(progress.toLong(), d)
+                }
             }
 
             override fun onStartTrackingTouch(sb: SeekBar) {
@@ -549,18 +564,62 @@ class MainActivity : AppCompatActivity() {
         b.btnSilence.isActivated = on
     }
 
-    private fun toggleVoice() {
-        val on = !prefs.getBoolean(Prefs.VOICE, false)
+    private fun sendVoice(on: Boolean) {
         prefs.edit().putBoolean(Prefs.VOICE, on).apply()
         val args = Bundle().apply { putBoolean("on", on) }
         controller?.sendCustomCommand(SessionCommand(Cmd.VOICE, Bundle.EMPTY), args)
-        refreshVoiceLabel()
+        refreshSoundLabel()
     }
 
-    private fun refreshVoiceLabel() {
-        val on = prefs.getBoolean(Prefs.VOICE, false)
-        b.btnVoice.text = "وضوح الصوت"
-        b.btnVoice.isActivated = on
+    private fun sendBoost(db: Int) {
+        prefs.edit().putInt(Prefs.BOOST, db).apply()
+        val args = Bundle().apply { putInt("db", db) }
+        controller?.sendCustomCommand(SessionCommand(Cmd.BOOST, Bundle.EMPTY), args)
+        refreshSoundLabel()
+    }
+
+    private fun refreshSoundLabel() {
+        b.btnVoice.text = "الصوت"
+        b.btnVoice.isActivated =
+            prefs.getBoolean(Prefs.VOICE, false) || prefs.getInt(Prefs.BOOST, 0) > 0
+    }
+
+    private fun showSoundDialog() {
+        val d = DialogSoundBinding.inflate(layoutInflater)
+        d.swVoice.isChecked = prefs.getBoolean(Prefs.VOICE, false)
+        when (prefs.getInt(Prefs.BOOST, 0)) {
+            4 -> d.rb4.isChecked = true
+            8 -> d.rb8.isChecked = true
+            else -> d.rbOff.isChecked = true
+        }
+        d.swVoice.setOnCheckedChangeListener { _, on -> sendVoice(on) }
+        d.rgBoost.setOnCheckedChangeListener { _, checkedId ->
+            val db = when (checkedId) {
+                R.id.rb4 -> 4
+                R.id.rb8 -> 8
+                else -> 0
+            }
+            sendBoost(db)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("الصوت")
+            .setView(d.root)
+            .setPositiveButton("تم", null)
+            .show()
+    }
+
+    // تكرار المقطع الحالي مرة واحدة بعد انتهائه (الخدمة تعيد الوضع العادي تلقائيًا)
+    private fun toggleRepeat() {
+        val c = controller ?: return
+        if (c.mediaItemCount == 0) return
+        val on = c.repeatMode != Player.REPEAT_MODE_ONE
+        c.repeatMode = if (on) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        b.btnRepeat.isActivated = on
+        if (on) Toast.makeText(this, "سيُعاد هذا المقطع مرة واحدة بعد انتهائه", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setDurText(pos: Long, dur: Long) {
+        b.tvDur.text = if (showRemain) "−" + fmtTime((dur - pos).coerceAtLeast(0L)) else fmtTime(dur)
     }
 
     // ------------------------------------------------------------------ bookmarks
@@ -670,6 +729,7 @@ class MainActivity : AppCompatActivity() {
         if (c != null) {
             b.btnSpeed.text = speedLabel(c.playbackParameters.speed)
             b.btnSpeed.isActivated = c.playbackParameters.speed != 1f
+            b.btnRepeat.isActivated = c.repeatMode == Player.REPEAT_MODE_ONE
         }
         refreshMarksLabel(id)
         if (id != null) loadCover(id)
@@ -682,28 +742,40 @@ class MainActivity : AppCompatActivity() {
     private fun loadCover(id: String) {
         if (id == coverId) return
         coverId = id
-        b.cover.setImageResource(R.drawable.cover_placeholder)
-        setCoverDp(120)
-        val trackId = id.toLongOrNull() ?: return
+        val trackId = id.toLongOrNull()
+        if (trackId == null) {
+            showCover(null)
+            return
+        }
         Thread {
             val bmp = readCover(trackId)
-            runOnUiThread {
-                if (coverId == id && bmp != null) {
-                    val d = RoundedBitmapDrawableFactory.create(resources, bmp)
-                    d.cornerRadius = minOf(bmp.width, bmp.height) * 0.05f
-                    b.cover.setImageDrawable(d)
-                    setCoverDp(240)
-                }
-            }
+            runOnUiThread { if (coverId == id) showCover(bmp) }
         }.start()
     }
 
-    private fun setCoverDp(dp: Int) {
-        val px = (dp * resources.displayMetrics.density).toInt()
-        val lp = b.cover.layoutParams
-        lp.width = px
-        lp.height = px
-        b.cover.layoutParams = lp
+    /** غلاف حقيقي: يظهر 240dp والعنوان بحجمه العادي. بدون غلاف: يختفي المربع والعنوان يكبر ويتوسط. */
+    private fun showCover(bmp: Bitmap?) {
+        if (bmp != null) {
+            val d = RoundedBitmapDrawableFactory.create(resources, bmp)
+            d.cornerRadius = minOf(bmp.width, bmp.height) * 0.05f
+            b.cover.setImageDrawable(d)
+        } else {
+            b.cover.setImageDrawable(null)
+        }
+        b.coverBox.visibility = if (bmp != null) View.VISIBLE else View.GONE
+        val lp = b.pTitle.layoutParams as LinearLayout.LayoutParams
+        if (bmp != null) {
+            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            lp.weight = 0f
+            b.pTitle.maxLines = 4
+            b.pTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+        } else {
+            lp.height = 0
+            lp.weight = 1f
+            b.pTitle.maxLines = 8
+            b.pTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+        }
+        b.pTitle.layoutParams = lp
     }
 
     private fun readCover(trackId: Long): Bitmap? {
@@ -747,7 +819,13 @@ class MainActivity : AppCompatActivity() {
             h.v.title.text = r.title
             h.v.sub.text = r.sub
             h.v.state.text = if (r.track != null) stateOf(r.track) else r.state
-            h.v.icon.setImageResource(if (r.track == null) R.drawable.ic_folder else R.drawable.ic_note)
+            h.v.icon.setImageResource(
+                when {
+                    r.track != null -> R.drawable.ic_note
+                    r.folderPath == F_CONTINUE -> R.drawable.ic_continue
+                    else -> R.drawable.ic_folder
+                }
+            )
             val playingNow = r.track != null && r.track.id.toString() == nowId
             h.v.title.setTextColor(
                 ContextCompat.getColor(this@MainActivity, if (playingNow) R.color.accent else R.color.text)

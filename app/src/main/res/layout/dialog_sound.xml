@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layoutDirection="rtl"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="24dp"
+    android:paddingBottom="4dp">
+
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/swVoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="وضوح الصوت"
+        android:textSize="16sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="يخفّض الدمدمة ويبرز نطاق الكلام"
+        android:textAlignment="viewStart"
+        android:textSize="12sp" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="12dp"
+        android:background="@color/track" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="رفع الصوت الضعيف"
+        android:textAlignment="viewStart"
+        android:textSize="16sp" />
+
+    <RadioGroup
+        android:id="@+id/rgBoost"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/rbOff"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="إيقاف" />
+
+        <RadioButton
+            android:id="@+id/rb4"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="+4 ديسيبل" />
+
+        <RadioButton
+            android:id="@+id/rb8"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="+8 ديسيبل" />
+    </RadioGroup>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="الرفع الأعلى قد يسبب تشويشًا في الملفات القوية أصلًا"
+        android:textAlignment="viewStart"
+        android:textSize="12sp" />
+</LinearLayout>
