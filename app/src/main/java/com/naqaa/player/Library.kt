@@ -18,7 +18,11 @@ object Prefs {
     fun dur(id: String) = "dur_$id"
     fun seen(id: String) = "seen_$id"
     const val PAUSED_AT = "paused_at"
+    const val HIDDEN = "hidden_folders"
 }
+
+const val F_CONTINUE = "__continue__"
+const val F_HIDDEN = "__hidden__"
 
 object Cmd {
     const val SILENCE = "naqaa.SILENCE"
@@ -110,4 +114,21 @@ fun fmtTime(ms: Long): String {
     val sec = s % 60
     return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec)
     else String.format(Locale.US, "%d:%02d", m, sec)
+}
+
+/** توحيد النص العربي للبحث: يزيل التشكيل والتطويل ويوحّد الألف والياء والتاء المربوطة */
+fun normAr(raw: String): String {
+    val sb = StringBuilder(raw.length)
+    for (ch in raw.lowercase()) {
+        val c = when (ch) {
+            'أ', 'إ', 'آ', 'ٱ' -> 'ا'
+            'ى' -> 'ي'
+            'ة' -> 'ه'
+            else -> ch
+        }
+        val code = c.code
+        if (code in 0x064B..0x065F || code == 0x0670 || code == 0x0640) continue
+        sb.append(c)
+    }
+    return sb.toString()
 }

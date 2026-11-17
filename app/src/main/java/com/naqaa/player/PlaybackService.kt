@@ -126,6 +126,10 @@ class PlaybackService : MediaSessionService() {
                     item.buildUpon()
                         .setUri(ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id))
                         .build()
+                } else if (item.localConfiguration == null) {
+                    // ملف خارجي (من واتساب أو مدير الملفات): الرابط يصل في requestMetadata
+                    val u = item.requestMetadata.mediaUri
+                    if (u != null) item.buildUpon().setUri(u).build() else item
                 } else item
             }.toMutableList()
             return Futures.immediateFuture(out)
@@ -220,7 +224,9 @@ class PlaybackService : MediaSessionService() {
         val item = player.currentMediaItem ?: return
         val id = item.mediaId
         if (id.isEmpty()) return
-        val e = prefs.edit().putString(Prefs.LAST, id).putLong(Prefs.seen(id), System.currentTimeMillis())
+        val e = prefs.edit().putLong(Prefs.seen(id), System.currentTimeMillis())
+        // آخر ملف للاستكمال يخصّ ملفات المكتبة فقط
+        if (id.toLongOrNull() != null) e.putString(Prefs.LAST, id)
         val dur = player.duration
         if (dur != C.TIME_UNSET && dur > 0) {
             val pos = player.currentPosition

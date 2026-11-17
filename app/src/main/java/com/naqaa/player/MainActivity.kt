@@ -3,16 +3,22 @@ package com.naqaa.player
 import android.Manifest
 import android.content.ComponentName
 import android.content.ContentUris
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.inputmethod.InputMethodManager
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -43,8 +49,7 @@ class Row(
     val track: Track?,
     val title: String,
     val sub: String,
-    val state: String,
-    val header: Boolean = false
+    val state: String
 )
 
 class MainActivity : AppCompatActivity() {
@@ -56,6 +61,10 @@ class MainActivity : AppCompatActivity() {
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
+    private var allTracks: List<Track> = emptyList()
+    private var hiddenFolders: List<String> = emptyList()
+    private var searchOpen = false
+    private var query = ""
     private var tracks: List<Track> = emptyList()
     private var folders: Map<String, List<Track>> = emptyMap()
     private var currentFolder: String? = null
@@ -109,6 +118,15 @@ class MainActivity : AppCompatActivity() {
         b.list.adapter = adapter
 
         b.btnBack.setOnClickListener { openFolder(null) }
+        b.btnSearch.setOnClickListener { if (searchOpen) closeSearch() else openSearch() }
+        b.search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b4: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                query = s?.toString().orEmpty()
+                if (searchOpen) buildRows()
+            }
+        })
         b.empty.setOnClickListener { ensurePermission() }
         b.miniBar.setOnClickListener {
             val c = controller
@@ -156,6 +174,7 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 when {
                     b.playerPage.visibility == View.VISIBLE -> showPlayer(false)
+                    searchOpen -> closeSearch()
                     currentFolder != null -> openFolder(null)
                     else -> {
                         isEnabled = false
@@ -166,6 +185,13 @@ class MainActivity : AppCompatActivity() {
         })
 
         ensurePermission()
+        if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
     }
 
     override fun onStart() {
@@ -239,13 +265,20 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    private fun hiddenSet(): Set<String> = prefs.getStringSet(Prefs.HIDDEN, emptySet()) ?: emptySet()
+
     private fun applyLibrary(list: List<Track>) {
+        val hidden = hiddenSet()
         val sorted = list.sortedWith { x, y -> natCompare(x.title, y.title) }
-        tracks = sorted
-        folders = sorted.groupBy { it.folder }
+        allTracks = sorted
+        tracks = sorted.filter { it.folder !in hidden }
+        folders = tracks.groupBy { it.folder }
             .entries.sortedBy { File(it.key).name.lowercase() }
             .associate { it.key to it.value }
-        if (currentFolder != null && !folders.containsKey(currentFolder)) currentFolder = null
+        hiddenFolders = sorted.map { it.folder }.distinct().filter { it in hidden }
+            .sortedBy { File(it).name.lowercase() }
+        val cf = currentFolder
+        if (cf != null && cf != F_CONTINUE && !folders.containsKey(cf)) currentFolder = null
         buildRows()
         updateAll()
     }
@@ -265,26 +298,40 @@ class MainActivity : AppCompatActivity() {
         tracks.filter {
             val p = prefs.getLong(Prefs.pos(it.id.toString()), 0L)
             p > 10_000 && it.durationMs > 0 && p < it.durationMs - 3000
-        }.sortedByDescending { prefs.getLong(Prefs.seen(it.id.toString()), 0L) }.take(3)
+        }.sortedByDescending { prefs.getLong(Prefs.seen(it.id.toString()), 0L) }
+
+    private fun matches(t: Track, toks: List<String>): Boolean {
+        val hay = normAr(t.title + " " + File(t.folder).name)
+        return toks.all { hay.contains(it) }
+    }
 
     private fun buildRows() {
         rows.clear()
         val cf = currentFolder
-        if (cf == null) {
+        var emptyMsg = "لا توجد ملفات صوتية على هذا الجهاز"
+        if (searchOpen && query.isNotBlank()) {
+            val toks = normAr(query).split(' ').filter { it.isNotEmpty() }
+            for (t in tracks) if (matches(t, toks)) rows.add(Row(null, t, t.title, File(t.folder).name, ""))
+            emptyMsg = "لا توجد نتائج"
+        } else if (cf == null) {
             b.title.text = "المكتبة"
             b.btnBack.visibility = View.GONE
             val cont = continueList()
-            if (cont.isNotEmpty()) {
-                rows.add(Row(null, null, "تابع الاستماع", "", "", true))
-                for (t in cont) rows.add(Row(null, t, t.title, File(t.folder).name, ""))
-                rows.add(Row(null, null, "المجلدات", "", "", true))
-            }
+            if (cont.isNotEmpty()) rows.add(Row(F_CONTINUE, null, "تابع الاستماع", "${cont.size} ملف", ""))
             val dup = folders.keys.groupingBy { File(it).name.lowercase() }.eachCount()
             for ((path, list) in folders) {
                 val name = File(path).name.ifEmpty { "/" }
                 val extra = if ((dup[name.lowercase()] ?: 0) > 1) " • ${shortPath(path)}" else ""
                 rows.add(Row(path, null, name, "${list.size} ملف$extra", ""))
             }
+            if (hiddenFolders.isNotEmpty()) {
+                rows.add(Row(F_HIDDEN, null, "مجلدات مخفية", "${hiddenFolders.size} مجلد", ""))
+            }
+        } else if (cf == F_CONTINUE) {
+            b.title.text = "تابع الاستماع"
+            b.btnBack.visibility = View.VISIBLE
+            for (t in continueList()) rows.add(Row(null, t, t.title, File(t.folder).name, ""))
+            emptyMsg = "لا توجد ملفات غير منتهية"
         } else {
             b.title.text = File(cf).name
             b.btnBack.visibility = View.VISIBLE
@@ -294,11 +341,103 @@ class MainActivity : AppCompatActivity() {
         }
         adapter.notifyDataSetChanged()
         if (rows.isEmpty()) {
-            b.empty.text = "لا توجد ملفات صوتية على هذا الجهاز"
+            b.empty.text = emptyMsg
             b.empty.visibility = View.VISIBLE
         } else {
             b.empty.visibility = View.GONE
         }
+    }
+
+    // ------------------------------------------------------------------ search / hide
+
+    private fun openSearch() {
+        searchOpen = true
+        b.title.visibility = View.GONE
+        b.search.visibility = View.VISIBLE
+        b.btnSearch.setImageResource(R.drawable.ic_close)
+        b.btnSearch.contentDescription = "إغلاق البحث"
+        b.search.requestFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(b.search, InputMethodManager.SHOW_IMPLICIT)
+        buildRows()
+    }
+
+    private fun closeSearch() {
+        searchOpen = false
+        query = ""
+        b.search.setText("")
+        b.search.visibility = View.GONE
+        b.title.visibility = View.VISIBLE
+        b.btnSearch.setImageResource(R.drawable.ic_search)
+        b.btnSearch.contentDescription = "بحث"
+        hideKeyboard()
+        buildRows()
+    }
+
+    private fun hideKeyboard() {
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(b.search.windowToken, 0)
+    }
+
+    private fun confirmHide(path: String) {
+        AlertDialog.Builder(this)
+            .setMessage("إخفاء المجلد «${File(path).name}» من المكتبة؟\nيمكنك إظهاره لاحقًا من «مجلدات مخفية».")
+            .setPositiveButton("إخفاء") { _, _ ->
+                prefs.edit().putStringSet(Prefs.HIDDEN, HashSet(hiddenSet() + path)).apply()
+                applyLibrary(allTracks)
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun showHidden() {
+        val labels = hiddenFolders.map { "${File(it).name}  •  ${shortPath(it)}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("اضغط على مجلد لإظهاره")
+            .setItems(labels) { _, i ->
+                prefs.edit().putStringSet(Prefs.HIDDEN, HashSet(hiddenSet() - hiddenFolders[i])).apply()
+                applyLibrary(allTracks)
+            }
+            .show()
+    }
+
+    // ------------------------------------------------------------------ open external file
+
+    private fun handleIntent(i: Intent?) {
+        if (i?.action != Intent.ACTION_VIEW) return
+        val uri = i.data ?: return
+        i.action = null
+        if (controller != null) playExternal(uri) else pending = { playExternal(uri) }
+    }
+
+    private fun displayName(uri: Uri): String? = try {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun playExternal(uri: Uri) {
+        val c = controller ?: return
+        val id = "ext_" + Integer.toHexString(uri.toString().hashCode())
+        val name = displayName(uri) ?: uri.lastPathSegment ?: "ملف صوتي"
+        val item = MediaItem.Builder()
+            .setMediaId(id)
+            .setUri(uri)
+            .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(uri).build())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(cleanTitle(name.substringBeforeLast('.')))
+                    .setArtist("ملف خارجي")
+                    .build()
+            )
+            .build()
+        val start = prefs.getLong(Prefs.pos(id), 0L).coerceAtLeast(0L)
+        c.setMediaItems(listOf(item), 0, start)
+        c.prepare()
+        c.play()
+        showPlayer(true)
     }
 
     private fun openFolder(path: String?) {
@@ -308,8 +447,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onRow(r: Row) {
+        hideKeyboard()
         if (r.track == null) {
-            openFolder(r.folderPath)
+            if (r.folderPath == F_HIDDEN) showHidden() else openFolder(r.folderPath)
         } else {
             val list = folders[r.track.folder].orEmpty()
             val idx = list.indexOf(r.track)
@@ -543,6 +683,7 @@ class MainActivity : AppCompatActivity() {
         if (id == coverId) return
         coverId = id
         b.cover.setImageResource(R.drawable.cover_placeholder)
+        setCoverDp(120)
         val trackId = id.toLongOrNull() ?: return
         Thread {
             val bmp = readCover(trackId)
@@ -551,9 +692,18 @@ class MainActivity : AppCompatActivity() {
                     val d = RoundedBitmapDrawableFactory.create(resources, bmp)
                     d.cornerRadius = minOf(bmp.width, bmp.height) * 0.05f
                     b.cover.setImageDrawable(d)
+                    setCoverDp(240)
                 }
             }
         }.start()
+    }
+
+    private fun setCoverDp(dp: Int) {
+        val px = (dp * resources.displayMetrics.density).toInt()
+        val lp = b.cover.layoutParams
+        lp.width = px
+        lp.height = px
+        b.cover.layoutParams = lp
     }
 
     private fun readCover(trackId: Long): Bitmap? {
@@ -595,20 +745,6 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(h: VH, position: Int) {
             val r = rows[position]
             h.v.title.text = r.title
-            if (r.header) {
-                h.v.icon.visibility = View.GONE
-                h.v.sub.visibility = View.GONE
-                h.v.state.text = ""
-                h.v.title.textSize = 13f
-                h.v.title.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent))
-                h.v.root.isClickable = false
-                h.v.root.setOnClickListener(null)
-                return
-            }
-            h.v.icon.visibility = View.VISIBLE
-            h.v.sub.visibility = View.VISIBLE
-            h.v.title.textSize = 16f
-            h.v.root.isClickable = true
             h.v.sub.text = r.sub
             h.v.state.text = if (r.track != null) stateOf(r.track) else r.state
             h.v.icon.setImageResource(if (r.track == null) R.drawable.ic_folder else R.drawable.ic_note)
@@ -617,6 +753,13 @@ class MainActivity : AppCompatActivity() {
                 ContextCompat.getColor(this@MainActivity, if (playingNow) R.color.accent else R.color.text)
             )
             h.v.root.setOnClickListener { onRow(r) }
+            val fp = r.folderPath
+            if (fp != null && fp != F_CONTINUE && fp != F_HIDDEN) {
+                h.v.root.setOnLongClickListener { confirmHide(fp); true }
+            } else {
+                h.v.root.setOnLongClickListener(null)
+                h.v.root.isLongClickable = false
+            }
         }
     }
 }
