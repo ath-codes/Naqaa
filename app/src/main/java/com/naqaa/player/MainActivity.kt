@@ -43,7 +43,8 @@ class Row(
     val track: Track?,
     val title: String,
     val sub: String,
-    val state: String
+    val state: String,
+    val header: Boolean = false
 )
 
 class MainActivity : AppCompatActivity() {
@@ -65,7 +66,7 @@ class MainActivity : AppCompatActivity() {
     private var coverId: String? = null
     private var dragging = false
     private var scanning = false
-    private var sleepLabel: String? = null
+    private var pending: (() -> Unit)? = null
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -110,7 +111,8 @@ class MainActivity : AppCompatActivity() {
         b.btnBack.setOnClickListener { openFolder(null) }
         b.empty.setOnClickListener { ensurePermission() }
         b.miniBar.setOnClickListener {
-            if ((controller?.mediaItemCount ?: 0) > 0) showPlayer(true) else resumeLast(true)
+            val c = controller
+            if (c == null || c.mediaItemCount > 0) showPlayer(true) else resumeLast(true)
         }
         b.miniPlay.setOnClickListener { togglePlay() }
         b.btnCollapse.setOnClickListener { showPlayer(false) }
@@ -128,7 +130,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         b.btnSpeed.setOnClickListener { chooseSpeed() }
-        b.btnSleep.setOnClickListener { chooseSleep() }
         b.btnSilence.setOnClickListener { toggleSilence() }
         b.btnVoice.setOnClickListener { toggleVoice() }
         b.btnAddMark.setOnClickListener { addBookmark() }
@@ -178,6 +179,7 @@ class MainActivity : AppCompatActivity() {
                 controller = c
                 c.addListener(playerListener)
                 updateAll()
+                pending?.let { p -> pending = null; p() }
             } catch (_: Exception) {
             }
         }, ContextCompat.getMainExecutor(this))
@@ -259,20 +261,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun continueList(): List<Track> =
+        tracks.filter {
+            val p = prefs.getLong(Prefs.pos(it.id.toString()), 0L)
+            p > 10_000 && it.durationMs > 0 && p < it.durationMs - 3000
+        }.sortedByDescending { prefs.getLong(Prefs.seen(it.id.toString()), 0L) }.take(3)
+
     private fun buildRows() {
         rows.clear()
         val cf = currentFolder
         if (cf == null) {
             b.title.text = "المكتبة"
             b.btnBack.visibility = View.GONE
+            val cont = continueList()
+            if (cont.isNotEmpty()) {
+                rows.add(Row(null, null, "تابع الاستماع", "", "", true))
+                for (t in cont) rows.add(Row(null, t, t.title, File(t.folder).name, ""))
+                rows.add(Row(null, null, "المجلدات", "", "", true))
+            }
+            val dup = folders.keys.groupingBy { File(it).name.lowercase() }.eachCount()
             for ((path, list) in folders) {
-                rows.add(Row(path, null, File(path).name.ifEmpty { "/" }, "${list.size} ملف • ${shortPath(path)}", ""))
+                val name = File(path).name.ifEmpty { "/" }
+                val extra = if ((dup[name.lowercase()] ?: 0) > 1) " • ${shortPath(path)}" else ""
+                rows.add(Row(path, null, name, "${list.size} ملف$extra", ""))
             }
         } else {
             b.title.text = File(cf).name
             b.btnBack.visibility = View.VISIBLE
             for (t in folders[cf].orEmpty()) {
-                rows.add(Row(null, t, t.title, fmtTime(t.durationMs), stateOf(t)))
+                rows.add(Row(null, t, t.title, fmtTime(t.durationMs), ""))
             }
         }
         adapter.notifyDataSetChanged()
@@ -294,7 +311,7 @@ class MainActivity : AppCompatActivity() {
         if (r.track == null) {
             openFolder(r.folderPath)
         } else {
-            val list = folders[currentFolder].orEmpty()
+            val list = folders[r.track.folder].orEmpty()
             val idx = list.indexOf(r.track)
             if (idx >= 0) play(list, idx, true)
         }
@@ -333,7 +350,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun togglePlay() {
-        val c = controller ?: return
+        val c = controller
+        if (c == null) {
+            pending = { togglePlay() }
+            return
+        }
         if (c.mediaItemCount == 0) {
             resumeLast(false)
             return
@@ -349,6 +370,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPlayer(show: Boolean) {
         b.playerPage.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) buildRows()
     }
 
     // ------------------------------------------------------------------ options
@@ -373,20 +395,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun chooseSleep() {
-        val labels = arrayOf("إيقاف المؤقت", "15 دقيقة", "30 دقيقة", "45 دقيقة", "60 دقيقة", "90 دقيقة", "عند نهاية الملف الحالي")
-        val mins = intArrayOf(0, 15, 30, 45, 60, 90, -1)
-        AlertDialog.Builder(this)
-            .setTitle("مؤقت النوم")
-            .setItems(labels) { _, i ->
-                val args = Bundle().apply { putInt("min", mins[i]) }
-                controller?.sendCustomCommand(SessionCommand(Cmd.SLEEP, Bundle.EMPTY), args)
-                sleepLabel = if (mins[i] == 0) null else labels[i]
-                b.btnSleep.text = sleepLabel ?: "مؤقت النوم"
-            }
-            .show()
-    }
-
     private fun toggleSilence() {
         val on = !prefs.getBoolean(Prefs.SILENCE, false)
         prefs.edit().putBoolean(Prefs.SILENCE, on).apply()
@@ -397,7 +405,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshSilenceLabel() {
         val on = prefs.getBoolean(Prefs.SILENCE, false)
-        b.btnSilence.text = if (on) "تخطي الصمت: تشغيل" else "تخطي الصمت: إيقاف"
+        b.btnSilence.text = "تخطي الصمت"
+        b.btnSilence.isActivated = on
     }
 
     private fun toggleVoice() {
@@ -410,7 +419,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshVoiceLabel() {
         val on = prefs.getBoolean(Prefs.VOICE, false)
-        b.btnVoice.text = if (on) "وضوح الصوت: تشغيل" else "وضوح الصوت: إيقاف"
+        b.btnVoice.text = "وضوح الصوت"
+        b.btnVoice.isActivated = on
     }
 
     // ------------------------------------------------------------------ bookmarks
@@ -517,7 +527,10 @@ class MainActivity : AppCompatActivity() {
         b.miniPlay.setImageResource(icon)
         b.btnPlay.setImageResource(icon)
 
-        if (c != null) b.btnSpeed.text = speedLabel(c.playbackParameters.speed)
+        if (c != null) {
+            b.btnSpeed.text = speedLabel(c.playbackParameters.speed)
+            b.btnSpeed.isActivated = c.playbackParameters.speed != 1f
+        }
         refreshMarksLabel(id)
         if (id != null) loadCover(id)
         if (id != nowId) {
@@ -582,8 +595,22 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(h: VH, position: Int) {
             val r = rows[position]
             h.v.title.text = r.title
+            if (r.header) {
+                h.v.icon.visibility = View.GONE
+                h.v.sub.visibility = View.GONE
+                h.v.state.text = ""
+                h.v.title.textSize = 13f
+                h.v.title.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent))
+                h.v.root.isClickable = false
+                h.v.root.setOnClickListener(null)
+                return
+            }
+            h.v.icon.visibility = View.VISIBLE
+            h.v.sub.visibility = View.VISIBLE
+            h.v.title.textSize = 16f
+            h.v.root.isClickable = true
             h.v.sub.text = r.sub
-            h.v.state.text = r.state
+            h.v.state.text = if (r.track != null) stateOf(r.track) else r.state
             h.v.icon.setImageResource(if (r.track == null) R.drawable.ic_folder else R.drawable.ic_note)
             val playingNow = r.track != null && r.track.id.toString() == nowId
             h.v.title.setTextColor(

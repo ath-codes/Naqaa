@@ -29,8 +29,6 @@ class PlaybackService : MediaSessionService() {
     private val handler = Handler(Looper.getMainLooper())
     private var eq: Equalizer? = null
 
-    private val sleepStop = Runnable { player.pause() }
-
     private val saver = object : Runnable {
         override fun run() {
             savePosition()
@@ -48,6 +46,24 @@ class PlaybackService : MediaSessionService() {
             try { eq?.release() } catch (_: Exception) {}
             eq = null
             if (prefs.getBoolean(Prefs.VOICE, false)) applyVoice(true)
+        }
+
+        // رجوع تلقائي بضع ثوانٍ بعد توقف طويل (أكثر من دقيقة)
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady) {
+                prefs.edit().putLong(Prefs.PAUSED_AT, System.currentTimeMillis()).apply()
+            } else {
+                val at = prefs.getLong(Prefs.PAUSED_AT, 0L)
+                if (at > 0L) {
+                    prefs.edit().putLong(Prefs.PAUSED_AT, 0L).apply()
+                    val pos = player.currentPosition
+                    if (System.currentTimeMillis() - at > 60_000L && pos > 4000L &&
+                        player.playbackState != Player.STATE_ENDED
+                    ) {
+                        player.seekTo((pos - 4000L).coerceAtLeast(0L))
+                    }
+                }
+            }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -77,7 +93,6 @@ class PlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo
         ): MediaSession.ConnectionResult {
             val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                .add(SessionCommand(Cmd.SLEEP, Bundle.EMPTY))
                 .add(SessionCommand(Cmd.SILENCE, Bundle.EMPTY))
                 .add(SessionCommand(Cmd.VOICE, Bundle.EMPTY))
                 .build()
@@ -93,7 +108,6 @@ class PlaybackService : MediaSessionService() {
             args: Bundle
         ): ListenableFuture<SessionResult> {
             when (customCommand.customAction) {
-                Cmd.SLEEP -> setSleep(args.getInt("min", 0))
                 Cmd.SILENCE -> player.setSkipSilenceEnabled(args.getBoolean("on", false))
                 Cmd.VOICE -> applyVoice(args.getBoolean("on", false))
             }
@@ -131,6 +145,8 @@ class PlaybackService : MediaSessionService() {
                     .build(),
                 true
             )
+            .setSeekBackIncrementMs(15_000)
+            .setSeekForwardIncrementMs(30_000)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
@@ -187,11 +203,11 @@ class PlaybackService : MediaSessionService() {
             for (band in 0 until e.numberOfBands.toInt()) {
                 val hz = e.getCenterFreq(band.toShort()) / 1000
                 val db = when {
-                    hz < 120 -> -4
-                    hz < 400 -> -1
-                    hz < 1500 -> 1
-                    hz < 6000 -> 4
-                    else -> 1
+                    hz < 120 -> -5
+                    hz < 400 -> -2
+                    hz < 1500 -> 0
+                    hz < 6000 -> 3
+                    else -> 0
                 }
                 e.setBandLevel(band.toShort(), (db * 100).coerceIn(lo, hi).toShort())
             }
@@ -200,18 +216,11 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private fun setSleep(min: Int) {
-        handler.removeCallbacks(sleepStop)
-        // -1 = التوقف عند نهاية الملف الحالي
-        player.setPauseAtEndOfMediaItems(min == -1)
-        if (min > 0) handler.postDelayed(sleepStop, min * 60_000L)
-    }
-
     private fun savePosition() {
         val item = player.currentMediaItem ?: return
         val id = item.mediaId
         if (id.isEmpty()) return
-        val e = prefs.edit().putString(Prefs.LAST, id)
+        val e = prefs.edit().putString(Prefs.LAST, id).putLong(Prefs.seen(id), System.currentTimeMillis())
         val dur = player.duration
         if (dur != C.TIME_UNSET && dur > 0) {
             val pos = player.currentPosition

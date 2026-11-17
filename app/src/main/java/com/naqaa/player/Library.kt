@@ -16,10 +16,11 @@ object Prefs {
     const val VOICE = "voice"
     fun pos(id: String) = "pos_$id"
     fun dur(id: String) = "dur_$id"
+    fun seen(id: String) = "seen_$id"
+    const val PAUSED_AT = "paused_at"
 }
 
 object Cmd {
-    const val SLEEP = "naqaa.SLEEP"
     const val SILENCE = "naqaa.SILENCE"
     const val VOICE = "naqaa.VOICE"
 }
