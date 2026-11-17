@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import android.provider.MediaStore.Audio.Media as AM
 import java.io.File
 import java.util.Locale
 
@@ -35,15 +36,14 @@ object Library {
 
     fun scan(ctx: Context): List<Track> {
         val out = ArrayList<Track>()
-        val a = MediaStore.Audio.Media
-        val proj = arrayOf(a._ID, a.DISPLAY_NAME, a.DURATION, a.DATA)
-        val sel = "${a.IS_RINGTONE}=0 AND ${a.IS_NOTIFICATION}=0 AND ${a.IS_ALARM}=0 AND ${a.DURATION}>=3000"
+        val proj = arrayOf(AM._ID, AM.DISPLAY_NAME, AM.DURATION, AM.DATA)
+        val sel = "${AM.IS_RINGTONE}=0 AND ${AM.IS_NOTIFICATION}=0 AND ${AM.IS_ALARM}=0 AND ${AM.DURATION}>=3000"
         try {
-            ctx.contentResolver.query(a.EXTERNAL_CONTENT_URI, proj, sel, null, null)?.use { c ->
-                val iId = c.getColumnIndexOrThrow(a._ID)
-                val iName = c.getColumnIndexOrThrow(a.DISPLAY_NAME)
-                val iDur = c.getColumnIndexOrThrow(a.DURATION)
-                val iData = c.getColumnIndexOrThrow(a.DATA)
+            ctx.contentResolver.query(AM.EXTERNAL_CONTENT_URI, proj, sel, null, null)?.use { c ->
+                val iId = c.getColumnIndexOrThrow(AM._ID)
+                val iName = c.getColumnIndexOrThrow(AM.DISPLAY_NAME)
+                val iDur = c.getColumnIndexOrThrow(AM.DURATION)
+                val iData = c.getColumnIndexOrThrow(AM.DATA)
                 while (c.moveToNext()) {
                     val path = c.getString(iData) ?: ""
                     val name = c.getString(iName) ?: File(path).name
