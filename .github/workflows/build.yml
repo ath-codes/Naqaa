@@ -1,0 +1,59 @@
+name: Unzip and Build
+
+on:
+  push:
+    paths:
+      - '*.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            unzip -o -q "$z"
+            rm -f "$z"
+          done
+          if [ ! -f settings.gradle.kts ]; then
+            f=$(find . -maxdepth 3 -name settings.gradle.kts -not -path './.git/*' | head -n 1)
+            if [ -n "$f" ]; then
+              cp -a "$(dirname "$f")"/. .
+            fi
+          fi
+          ls -la
+
+      - name: Save unpacked sources
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Unpack project" || echo "No changes"
+          git push || echo "Push skipped"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build release APK
+        run: gradle assembleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Naqaa-APK
+          path: app/build/outputs/apk/release/*.apk
