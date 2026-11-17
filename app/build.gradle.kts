@@ -11,8 +11,8 @@ android {
         applicationId = "com.naqaa.player"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.5"
+        versionCode = 6
+        versionName = "0.6"
     }
 
     // مفتاح توقيع ثابت: يسمح بتحديث التطبيق فوق النسخة المثبتة دون حذفها

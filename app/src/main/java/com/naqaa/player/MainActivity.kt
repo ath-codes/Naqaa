@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
     private var query = ""
     private var tracks: List<Track> = emptyList()
     private var folders: Map<String, List<Track>> = emptyMap()
+    private var folderKeys: Map<String, String> = emptyMap()
     private var currentFolder: String? = null
     private val rows = ArrayList<Row>()
     private val adapter = RowAdapter()
@@ -91,6 +92,8 @@ class MainActivity : AppCompatActivity() {
             updateAll()
         }
     }
+
+    private val searchRun = Runnable { if (searchOpen) buildRows() }
 
     private val tick = object : Runnable {
         override fun run() {
@@ -126,7 +129,8 @@ class MainActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, st: Int, b4: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 query = s?.toString().orEmpty()
-                if (searchOpen) buildRows()
+                ui.removeCallbacks(searchRun)
+                ui.postDelayed(searchRun, 120)
             }
         })
         b.empty.setOnClickListener { ensurePermission() }
@@ -290,6 +294,7 @@ class MainActivity : AppCompatActivity() {
         folders = tracks.groupBy { it.folder }
             .entries.sortedBy { File(it.key).name.lowercase() }
             .associate { it.key to it.value }
+        folderKeys = folders.keys.associateWith { normAr(File(it).name) }
         hiddenFolders = sorted.map { it.folder }.distinct().filter { it in hidden }
             .sortedBy { File(it).name.lowercase() }
         val cf = currentFolder
@@ -315,10 +320,7 @@ class MainActivity : AppCompatActivity() {
             p > 10_000 && it.durationMs > 0 && p < it.durationMs - 3000
         }.sortedByDescending { prefs.getLong(Prefs.seen(it.id.toString()), 0L) }
 
-    private fun matches(t: Track, toks: List<String>): Boolean {
-        val hay = normAr(t.title + " " + File(t.folder).name)
-        return toks.all { hay.contains(it) }
-    }
+    private fun matches(t: Track, toks: List<String>): Boolean = toks.all { t.search.contains(it) }
 
     private fun buildRows() {
         rows.clear()
@@ -326,6 +328,12 @@ class MainActivity : AppCompatActivity() {
         var emptyMsg = "لا توجد ملفات صوتية على هذا الجهاز"
         if (searchOpen && query.isNotBlank()) {
             val toks = normAr(query).split(' ').filter { it.isNotEmpty() }
+            for ((path, list) in folders) {
+                val key = folderKeys[path].orEmpty()
+                if (toks.all { key.contains(it) }) {
+                    rows.add(Row(path, null, File(path).name.ifEmpty { "/" }, "${list.size} ملف", ""))
+                }
+            }
             for (t in tracks) if (matches(t, toks)) rows.add(Row(null, t, t.title, File(t.folder).name, ""))
             emptyMsg = "لا توجد نتائج"
         } else if (cf == null) {
@@ -464,7 +472,11 @@ class MainActivity : AppCompatActivity() {
     private fun onRow(r: Row) {
         hideKeyboard()
         if (r.track == null) {
-            if (r.folderPath == F_HIDDEN) showHidden() else openFolder(r.folderPath)
+            if (r.folderPath == F_HIDDEN) showHidden()
+            else {
+                if (searchOpen) closeSearch()
+                openFolder(r.folderPath)
+            }
         } else {
             val list = folders[r.track.folder].orEmpty()
             val idx = list.indexOf(r.track)
@@ -678,6 +690,9 @@ class MainActivity : AppCompatActivity() {
         val d = AlertDialog.Builder(this)
             .setTitle("العلامات (اضغط للانتقال، ومطولًا للحذف)")
             .setItems(labels) { _, i -> c.seekTo(list[i].first) }
+            .setNeutralButton("مشاركة") { _, _ ->
+                shareBookmarks(c.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty(), list)
+            }
             .create()
         d.setOnShowListener {
             d.listView.setOnItemLongClickListener { _, _, pos, _ ->
@@ -694,6 +709,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
         d.show()
+    }
+
+    /** تصدير العلامات كنص عبر قائمة المشاركة: العنوان ثم سطر لكل علامة «الوقت — الملاحظة» */
+    private fun shareBookmarks(title: String, list: List<Pair<Long, String>>) {
+        val text = buildString {
+            if (title.isNotEmpty()) append(title).append('\n')
+            for ((ms, note) in list) {
+                append(fmtTime(ms))
+                if (note.isNotEmpty()) append(" — ").append(note)
+                append('\n')
+            }
+        }.trimEnd()
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "علامات: $title")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(send, "مشاركة العلامات"))
     }
 
     // ------------------------------------------------------------------ UI sync

@@ -36,7 +36,9 @@ data class Track(
     val id: Long,
     val title: String,
     val folder: String,
-    val durationMs: Long
+    val durationMs: Long,
+    /** نص البحث المطبَّع (العنوان + اسم المجلد)، يُحسب مرة واحدة عند المسح */
+    val search: String = ""
 ) {
     val uri: Uri
         get() = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
@@ -57,12 +59,15 @@ object Library {
                 while (c.moveToNext()) {
                     val path = c.getString(iData) ?: ""
                     val name = c.getString(iName) ?: File(path).name
+                    val title = cleanTitle(name.substringBeforeLast('.'))
+                    val folder = File(path).parent ?: ""
                     out.add(
                         Track(
                             id = c.getLong(iId),
-                            title = cleanTitle(name.substringBeforeLast('.')),
-                            folder = File(path).parent ?: "",
-                            durationMs = c.getLong(iDur)
+                            title = title,
+                            folder = folder,
+                            durationMs = c.getLong(iDur),
+                            search = normAr(title + " " + File(folder).name)
                         )
                     )
                 }
@@ -125,7 +130,8 @@ fun normAr(raw: String): String {
     for (ch in raw.lowercase()) {
         val c = when (ch) {
             'أ', 'إ', 'آ', 'ٱ' -> 'ا'
-            'ى' -> 'ي'
+            'ى', 'ئ' -> 'ي'
+            'ؤ' -> 'و'
             'ة' -> 'ه'
             else -> ch
         }
