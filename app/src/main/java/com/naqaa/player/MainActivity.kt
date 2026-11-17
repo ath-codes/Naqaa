@@ -16,6 +16,8 @@ import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.Toast
 import android.widget.SeekBar
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -128,7 +130,11 @@ class MainActivity : AppCompatActivity() {
         b.btnSpeed.setOnClickListener { chooseSpeed() }
         b.btnSleep.setOnClickListener { chooseSleep() }
         b.btnSilence.setOnClickListener { toggleSilence() }
+        b.btnVoice.setOnClickListener { toggleVoice() }
+        b.btnAddMark.setOnClickListener { addBookmark() }
+        b.btnMarks.setOnClickListener { showBookmarks() }
         refreshSilenceLabel()
+        refreshVoiceLabel()
 
         b.seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
@@ -394,6 +400,93 @@ class MainActivity : AppCompatActivity() {
         b.btnSilence.text = if (on) "تخطي الصمت: تشغيل" else "تخطي الصمت: إيقاف"
     }
 
+    private fun toggleVoice() {
+        val on = !prefs.getBoolean(Prefs.VOICE, false)
+        prefs.edit().putBoolean(Prefs.VOICE, on).apply()
+        val args = Bundle().apply { putBoolean("on", on) }
+        controller?.sendCustomCommand(SessionCommand(Cmd.VOICE, Bundle.EMPTY), args)
+        refreshVoiceLabel()
+    }
+
+    private fun refreshVoiceLabel() {
+        val on = prefs.getBoolean(Prefs.VOICE, false)
+        b.btnVoice.text = if (on) "وضوح الصوت: تشغيل" else "وضوح الصوت: إيقاف"
+    }
+
+    // ------------------------------------------------------------------ bookmarks
+
+    private fun loadBookmarks(id: String): List<Pair<Long, String>> =
+        (prefs.getString("bm_$id", "") ?: "").lines().filter { it.isNotBlank() }.mapNotNull { l ->
+            val p = l.split("|", limit = 2)
+            val ms = p[0].toLongOrNull() ?: return@mapNotNull null
+            ms to p.getOrElse(1) { "" }
+        }.sortedBy { it.first }
+
+    private fun saveBookmarks(id: String, list: List<Pair<Long, String>>) {
+        prefs.edit().putString("bm_$id", list.joinToString("\n") { "${it.first}|${it.second}" }).apply()
+    }
+
+    private fun refreshMarksLabel(id: String?) {
+        val n = if (id == null) 0 else loadBookmarks(id).size
+        b.btnMarks.text = if (n > 0) "العلامات ($n)" else "العلامات"
+    }
+
+    private fun addBookmark() {
+        val c = controller ?: return
+        val id = c.currentMediaItem?.mediaId ?: return
+        val pos = c.currentPosition
+        val et = EditText(this)
+        et.hint = "ملاحظة (اختياري)"
+        et.setSingleLine()
+        val d = AlertDialog.Builder(this)
+            .setTitle("علامة عند ${fmtTime(pos)}")
+            .setPositiveButton("حفظ") { _, _ ->
+                val list = loadBookmarks(id).toMutableList()
+                list.add(pos to et.text.toString().replace('\n', ' ').replace("|", " ").trim())
+                saveBookmarks(id, list.sortedBy { it.first })
+                refreshMarksLabel(id)
+                Toast.makeText(this, "تمت إضافة العلامة", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("إلغاء", null)
+            .create()
+        d.setView(et, 48, 16, 48, 0)
+        d.show()
+    }
+
+    private fun showBookmarks() {
+        val c = controller ?: return
+        val id = c.currentMediaItem?.mediaId ?: return
+        val list = loadBookmarks(id)
+        if (list.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("العلامات")
+                .setMessage("لا توجد علامات في هذا الملف. اضغط «إضافة علامة» أثناء التشغيل لحفظ لحظة مهمة.")
+                .setPositiveButton("حسنًا", null)
+                .show()
+            return
+        }
+        val labels = list.map { "${fmtTime(it.first)}  —  ${it.second.ifEmpty { "علامة" }}" }.toTypedArray()
+        val d = AlertDialog.Builder(this)
+            .setTitle("العلامات (اضغط للانتقال، ومطولًا للحذف)")
+            .setItems(labels) { _, i -> c.seekTo(list[i].first) }
+            .create()
+        d.setOnShowListener {
+            d.listView.setOnItemLongClickListener { _, _, pos, _ ->
+                d.dismiss()
+                AlertDialog.Builder(this)
+                    .setMessage("حذف هذه العلامة؟")
+                    .setPositiveButton("حذف") { _, _ ->
+                        saveBookmarks(id, list.filterIndexed { idx, _ -> idx != pos })
+                        refreshMarksLabel(id)
+                    }
+                    .setNegativeButton("إلغاء", null)
+                    .show()
+                true
+            }
+        }
+        d.show()
+    }
+
     // ------------------------------------------------------------------ UI sync
 
     private fun updateAll() {
@@ -425,6 +518,7 @@ class MainActivity : AppCompatActivity() {
         b.btnPlay.setImageResource(icon)
 
         if (c != null) b.btnSpeed.text = speedLabel(c.playbackParameters.speed)
+        refreshMarksLabel(id)
         if (id != null) loadCover(id)
         if (id != nowId) {
             nowId = id

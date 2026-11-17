@@ -13,6 +13,7 @@ object Prefs {
     const val SPEED = "speed"
     const val SILENCE = "silence"
     const val LAST = "last_id"
+    const val VOICE = "voice"
     fun pos(id: String) = "pos_$id"
     fun dur(id: String) = "dur_$id"
 }
@@ -20,6 +21,7 @@ object Prefs {
 object Cmd {
     const val SLEEP = "naqaa.SLEEP"
     const val SILENCE = "naqaa.SILENCE"
+    const val VOICE = "naqaa.VOICE"
 }
 
 data class Track(
@@ -50,7 +52,7 @@ object Library {
                     out.add(
                         Track(
                             id = c.getLong(iId),
-                            title = name.substringBeforeLast('.'),
+                            title = cleanTitle(name.substringBeforeLast('.')),
                             folder = File(path).parent ?: "",
                             durationMs = c.getLong(iDur)
                         )
@@ -61,6 +63,14 @@ object Library {
         }
         return out
     }
+}
+
+/** تنظيف اسم الملف: يزيل _ وزوائد مثل 128 kbps */
+fun cleanTitle(raw: String): String {
+    var s = raw.replace(Regex("[\\s_-]*\\d{2,3}\\s*kbps", RegexOption.IGNORE_CASE), "")
+    s = s.replace(Regex("\\s+_+\\s*|\\s*_+\\s+"), " - ").replace('_', ' ')
+    s = s.replace(Regex("\\s+"), " ").trim().trim('-').trim()
+    return s.ifEmpty { raw }
 }
 
 /** ترتيب طبيعي: "درس 2" قبل "درس 10" */

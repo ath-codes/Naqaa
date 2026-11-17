@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.ContentUris
 import android.content.Intent
 import android.content.SharedPreferences
+import android.media.audiofx.Equalizer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -26,6 +27,7 @@ class PlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
+    private var eq: Equalizer? = null
 
     private val sleepStop = Runnable { player.pause() }
 
@@ -40,6 +42,12 @@ class PlaybackService : MediaSessionService() {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             handler.removeCallbacks(saver)
             if (isPlaying) handler.postDelayed(saver, 5000) else savePosition()
+        }
+
+        override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            try { eq?.release() } catch (_: Exception) {}
+            eq = null
+            if (prefs.getBoolean(Prefs.VOICE, false)) applyVoice(true)
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -71,6 +79,7 @@ class PlaybackService : MediaSessionService() {
             val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                 .add(SessionCommand(Cmd.SLEEP, Bundle.EMPTY))
                 .add(SessionCommand(Cmd.SILENCE, Bundle.EMPTY))
+                .add(SessionCommand(Cmd.VOICE, Bundle.EMPTY))
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(cmds)
@@ -86,6 +95,7 @@ class PlaybackService : MediaSessionService() {
             when (customCommand.customAction) {
                 Cmd.SLEEP -> setSleep(args.getInt("min", 0))
                 Cmd.SILENCE -> player.setSkipSilenceEnabled(args.getBoolean("on", false))
+                Cmd.VOICE -> applyVoice(args.getBoolean("on", false))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
@@ -128,6 +138,7 @@ class PlaybackService : MediaSessionService() {
         player.setPlaybackSpeed(prefs.getFloat(Prefs.SPEED, 1f))
         player.setSkipSilenceEnabled(prefs.getBoolean(Prefs.SILENCE, false))
         player.addListener(listener)
+        if (prefs.getBoolean(Prefs.VOICE, false)) applyVoice(true)
 
         val open = PendingIntent.getActivity(
             this, 0,
@@ -151,12 +162,42 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         savePosition()
+        try { eq?.release() } catch (_: Exception) {}
+        eq = null
         session?.let {
             it.player.release()
             it.release()
         }
         session = null
         super.onDestroy()
+    }
+
+    /** وضوح الصوت: خفض الدمدمة المنخفضة ورفع نطاق الكلام (1.5-6 كيلوهرتز) */
+    private fun applyVoice(on: Boolean) {
+        try {
+            if (!on) {
+                eq?.setEnabled(false)
+                return
+            }
+            val sid = player.audioSessionId
+            if (sid == C.AUDIO_SESSION_ID_UNSET) return
+            val e = eq ?: Equalizer(0, sid).also { eq = it }
+            val lo = e.bandLevelRange[0].toInt()
+            val hi = e.bandLevelRange[1].toInt()
+            for (band in 0 until e.numberOfBands.toInt()) {
+                val hz = e.getCenterFreq(band.toShort()) / 1000
+                val db = when {
+                    hz < 120 -> -4
+                    hz < 400 -> -1
+                    hz < 1500 -> 1
+                    hz < 6000 -> 4
+                    else -> 1
+                }
+                e.setBandLevel(band.toShort(), (db * 100).coerceIn(lo, hi).toShort())
+            }
+            e.setEnabled(true)
+        } catch (_: Exception) {
+        }
     }
 
     private fun setSleep(min: Int) {
